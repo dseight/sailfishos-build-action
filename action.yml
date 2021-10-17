@@ -1,0 +1,64 @@
+name: 'Build Sailfish OS packages'
+description: 'Build packages for Sailfish OS'
+
+inputs:
+  version:
+    description: 'Sailfish OS version to build package for'
+    required: true
+  arch:
+    description: 'Target architecture'
+    required: true
+  spec:
+    description: 'Specify the .spec file'
+    required: false
+  validate:
+    description: 'Run Harbour validator'
+    required: false
+    default: false
+
+runs:
+  using: 'composite'
+  steps:
+    -
+      name: Pulling sailfishos-build Docker image
+      shell: bash
+      # Expressions are currently unsupported in 'uses' option of a step
+      # (see https://github.community/t/expressions-in-docker-uri/16271),
+      # so use docker directly here.
+      run: docker pull ghcr.io/dseight/sailfishos-sdk:v1-${{ inputs.version }}
+    -
+      name: Building a package
+      shell: bash
+      # "if" condition for steps is not working in composite actions
+      # (see https://github.com/actions/runner/issues/834)
+      run: |
+        if [ -n "${{ inputs.spec }}" ]; then
+          docker run --rm -v $PWD:$PWD -w $PWD \
+          ghcr.io/dseight/sailfishos-sdk:v1-${{ inputs.version }} \
+          mb2 -t SailfishOS-${{ inputs.arch }} -s ${{ inputs.spec }} --no-snapshot build -d
+        else
+          docker run --rm -v $PWD:$PWD -w $PWD \
+          ghcr.io/dseight/sailfishos-sdk:v1-${{ inputs.version }} \
+          mb2 -t SailfishOS-${{ inputs.arch }} --no-snapshot build -d
+        fi
+    -
+      name: Searching for built packages to validate
+      id: find-package
+      shell: bash
+      run: |
+        if [ "${{ inputs.validate }}" = true ]; then
+          echo "::set-output name=package-path::$(find RPMS/ -name "*.rpm" | grep -vE -- "-debug(info|source)-" | head -n 1)"
+        fi
+    -
+      name: Validating
+      shell: bash
+      run: |
+        if [ -n "${{ steps.find-package.outputs.package-path }}" ]; then
+          docker run --rm -v $PWD:$PWD -w $PWD \
+          ghcr.io/dseight/sailfishos-sdk:v1-${{ inputs.version }} \
+          rpmvalidation -t SailfishOS-${{ inputs.arch }} ${{ steps.find-package.outputs.package-path }}
+        fi
+
+branding:
+  icon: 'anchor'
+  color: 'white'
